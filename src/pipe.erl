@@ -1,5 +1,5 @@
 %%% @doc Syntactic sugar for something like a pipe operator
-%%% 
+%%%
 %%% Calls a sequence of functions to modify state avoiding using
 %%% temporary variables or funs. The order of functions is also more
 %%% intuitive and readable.
@@ -16,7 +16,7 @@
 %%% State2 = b(Config, State1),
 %%% State3 = m:c(State2, Config),
 %%% State3.
-%%% 
+%%%
 %%% into a chain of function calls
 %%%
 %%% m:c(
@@ -39,39 +39,36 @@
 -include_lib("syntax_tools/include/merl.hrl").
 
 parse_transform(Forms, _Options) ->
-    FormList = erl_syntax:form_list(Forms),
-    {Converted, _} =
-        erl_syntax_lib:mapfold(
-          fun convert/2, undefined, FormList),
+    Converted =
+        [try erl_syntax_lib:map(fun convert/1, Form)
+         catch Error -> Error
+         end
+         || Form <- Forms],
     erl_syntax:revert_forms(Converted).
-    
 
-convert(Tree, File) ->
+convert(Tree) ->
     case Tree of
-        ?Q("-file(\"'@NewFile\", 9090).") ->
-            {Tree, erl_syntax:string_value(NewFile)};
         ?Q("pipe(_@Init, [_@@Funs])") ->
-            NewTree = chain_funs(Funs, Init, File),
-            {NewTree, File};
+            chain_funs(Funs, Init);
         ?Q("pipe(_@_, _@WrongArg)") ->
-            report_error(File, erl_syntax:get_pos(WrongArg),
+            report_error(erl_syntax:get_pos(WrongArg),
                          "second arg of pipe must be a list of functions");
         _ ->
-            {Tree, File}
+            Tree
     end.
 
-chain_funs([Fun|Funs], Input, File) ->
+chain_funs([Fun|Funs], Input) ->
     case Fun of
         ?Q("_@FName(_@@Args)") ->
-            check_args(Args, File, erl_syntax:get_pos(Fun)),
+            check_args(Args, erl_syntax:get_pos(Fun)),
             NewArgs = replace_args(Args, Input),
             NewFun = ?Q("_@FName(_@NewArgs)"),
-            chain_funs(Funs, NewFun, File);
+            chain_funs(Funs, NewFun);
         _ ->
-            report_error(File, erl_syntax:get_pos(Fun),
+            report_error(erl_syntax:get_pos(Fun),
                          "second arg of pipe must be a list of functions")
     end;
-chain_funs([], Input, _) ->
+chain_funs([], Input) ->
     Input.
 
 replace_args(Args, Input) ->
@@ -81,13 +78,13 @@ replace_args(Args, Input) ->
      end
      || A <- Args].
 
-check_args(Args, File, Pos) ->
-    Us = [A||A <- Args, erl_syntax:type(A) =:= underscore],
+check_args(Args, Pos) ->
+    Us = [A || A <- Args, erl_syntax:type(A) =:= underscore],
     1 =:= length(Us) orelse
-        report_error(File, Pos, "function must have exactly one underscore").
+        report_error(Pos, "function must have exactly one underscore").
 
-report_error(File, Pos, Msg) ->
-    throw({error, _Es = [{File, [{Pos, ?MODULE, Msg}]} ], _Ws = []}).
+report_error(Pos, Msg) ->
+    throw({error, {Pos, ?MODULE, Msg}}).
 
 format_error(Msg) ->
     Msg.
